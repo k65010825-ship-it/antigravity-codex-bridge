@@ -73,29 +73,13 @@ You never have to wade through walls of defensive Codex jargon. Every audit or r
 Install directly from GitHub via Antigravity CLI:
 
 ```bash
-agy plugin install https://github.com/ballShell/codex-bridge
+agy plugin install https://github.com/k65010825-ship-it/antigravity-codex-bridge
 ```
 
 Or clone into your global Antigravity plugins directory:
 
 ```bash
-git clone https://github.com/ballShell/codex-bridge.git ~/.gemini/config/plugins/codex-bridge
+git clone https://github.com/k65010825-ship-it/antigravity-codex-bridge.git ~/.gemini/config/plugins/codex-bridge
 ```
 
 > Optional environment variables: `CODEX_BIN` (custom `codex` binary path) and `CODEX_BRIDGE_ALLOW_DANGER_SANDBOX=1` (unsandboxed mode is blocked by default unless explicitly opted in).
-
-## License
-
-Licensed under the [MIT License](LICENSE).
-
----
-
-<details>
-<summary>Workspace Metadata (AgentsWorkSpace)</summary>
-
-- **所属 Agent**：Antigravity (Gemini)
-- **目录性质**：持久化（长期保留）
-- **创建日期**：2026-11-21
-- **任务简述**：将 OpenAI Codex CLI 封装为 Antigravity 原生插件（`codex-bridge`），实现前店后厂双模型协同。
-
-</details>

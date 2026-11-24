@@ -1,12 +1,15 @@
 {
   "mcpServers": {
     "codex": {
-      "command": "python3",
+      "command": "python",
       "args": [
         "${PLUGIN_ROOT}/scripts/codex_mcp_server.py",
         "--data-dir",
         "${PLUGIN_DATA}"
       ],
+      "env": {
+        "CODEX_BIN": "C:\\Users\\lenovo\\.codex\\.sandbox-bin\\codex.exe"
+      },
       "timeoutSeconds": 900,
       "tools": {
         "codex_status": {

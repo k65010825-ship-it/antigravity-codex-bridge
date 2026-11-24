@@ -75,17 +75,13 @@
 方式一：通过 Antigravity CLI 直接安装
 
 ```bash
-agy plugin install https://github.com/ballShell/codex-bridge
+agy plugin install https://github.com/k65010825-ship-it/antigravity-codex-bridge
 ```
 
 方式二：克隆到 Antigravity 全局插件目录
 
 ```bash
-git clone https://github.com/ballShell/codex-bridge.git ~/.gemini/config/plugins/codex-bridge
+git clone https://github.com/k65010825-ship-it/antigravity-codex-bridge.git ~/.gemini/config/plugins/codex-bridge
 ```
 
 > 可选环境变量：`CODEX_BIN`（自定义 `codex` 路径）、`CODEX_BRIDGE_ALLOW_DANGER_SANDBOX=1`（默认禁用无沙盒模式，仅在明确需要时手动开启）。
-
-## 开源协议
-
-基于 [MIT License](LICENSE) 开源。
