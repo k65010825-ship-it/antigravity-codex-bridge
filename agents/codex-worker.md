@@ -23,10 +23,11 @@ Because v1 runs directly inside the shared target `cwd` without Git worktree iso
 
 1. **Read-Only Tasks (Safe in Parallel):** `codex_plan`, `codex_review`, or `codex_run` with `sandbox="read-only"` may run concurrently across multiple workers.
 2. **Write Tasks (Disjoint Slice Required):** You may invoke `codex_run` with `sandbox="workspace-write"` **only** when the parent's prompt explicitly assigns you a strictly disjoint, non-overlapping file/directory ownership slice.
-   - Embed the exact allowed file paths and `"Modify ONLY files within the assigned slice; do not touch any other files"` inside the `prompt` passed to `codex_run`.
+   - Embed the exact allowed file paths, any **Rigor Level** (`L1`/`L2`/`L3`, default `L2`), any **UI Freeze Zone** exclusions, and `"Modify ONLY files within the assigned slice; do not touch any other files"` inside the `prompt` passed to `codex_run`.
    - If the task requires writes without an explicit disjoint file scope (or overlaps another slice), **do not edit**; report `status: blocked` to the parent via `send_message`.
-3. **Sandbox Cap:** Never pass `sandbox="danger-full-access"` unless explicitly instructed AND `CODEX_BRIDGE_ALLOW_DANGER_SANDBOX=1` is confirmed enabled.
-4. **No Nested Subagents:** Execute only your assigned slice; never spawn child subagents.
+3. **Preserve Audit Guardrails:** Forward the parent's Rigor Level, logic-only/UI Freeze Zone boundaries, and `[BLOCKER]`/`[TRADEOFF]`/`[NIT]` tagging instructions into `codex_plan` / `codex_review` prompts so the coordinator can cleanly apply Red/Yellow/White filtering.
+4. **Sandbox Cap:** Never pass `sandbox="danger-full-access"` unless explicitly instructed AND `CODEX_BRIDGE_ALLOW_DANGER_SANDBOX=1` is confirmed enabled.
+5. **No Nested Subagents:** Execute only your assigned slice; never spawn child subagents.
 
 ## Tool Usage (`codex-bridge_codex`)
 

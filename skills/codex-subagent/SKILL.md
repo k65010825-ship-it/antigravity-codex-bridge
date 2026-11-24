@@ -23,11 +23,12 @@ Choose the leanest tool that matches the user's request:
 
 ### A. Read-Only Question, Exploration, or Analysis -> `codex_plan`
 - Use when the user asks Codex to explain, diagnose, audit, or propose options without modifying files.
+- Include the active **Rigor Level** (default `L2` Pragmatic MVP) so Codex calibrates feedback instead of over-defending.
 - `codex_plan` enforces `-s read-only` at the subprocess level and returns `session_id` in case the user later asks to implement.
 - Args: `prompt`, `cwd`, optional `model`, `reasoning_effort`, `images`, `wait_seconds` (`0..600`, default `120`).
 
 ### B. Bounded Edit, Script, or Direct Task -> `codex_run`
-- Translate the user's request into a crisp brief (Goal, `cwd` & target paths, constraints, acceptance check) and call `codex_run`:
+- Translate the user's request into a crisp brief (Goal, active Rigor Level default `L2`, `cwd` & target paths, UI Freeze Zone boundaries if frontend files exist, constraints, acceptance check) and call `codex_run`:
   - `prompt` (required), `cwd` (required)
   - `sandbox`: `"workspace-write"` (default) or `"read-only"` (never `"danger-full-access"` unless `CODEX_BRIDGE_ALLOW_DANGER_SANDBOX=1` is set and the user explicitly requested it)
   - Optional: `model`, `reasoning_effort`, `images`, `async_mode` (`false` by default), `wait_seconds` (`0..600`, default `120`)
@@ -43,7 +44,7 @@ Choose the leanest tool that matches the user's request:
   - `mode="base"`: pass `base_branch="<branch>"` (do not pass `commit_sha`).
   - `mode="commit"`: pass `commit_sha="<sha>"` (do not pass `base_branch`).
   - `mode="custom"`: pass `prompt="<review instructions>"` (do not pass `base_branch` or `commit_sha`).
-- Optional args: `title`, `prompt` (passing `prompt` alongside `uncommitted`/`base`/`commit` is supported—the server routes focused target+prompt reviews automatically), `model`, `wait_seconds` (`0..600`, default `120`).
+- Optional args: `title`, `prompt` (passing `prompt` alongside `uncommitted`/`base`/`commit` is supported—use `prompt` to specify active Rigor Level, request `[BLOCKER]`/`[TRADEOFF]`/`[NIT]` tags, and enforce **logic-only review / hands off UI styling** when frontend files are touched), `model`, `wait_seconds` (`0..600`, default `120`).
 
 ## Step 3: Handle Long-Running Tasks (`codex_poll`)
 
@@ -53,7 +54,10 @@ If `codex_plan`, `codex_run` (including `async_mode: true`), or `codex_review` r
 
 ## Step 4: Verify & Translate Back to the User
 
-Never dump raw JSON or JSONL logs. Present results cleanly in the **user's own language**:
-- **For `codex_run`:** Inspect `changed_files`, `pre_existing_dirty_files` (do not attribute untouched dirty files to Codex), and `diff_stat`. Read key modified files or run a quick sanity check if needed, then summarize what changed, verification results, and `session_id` readiness for follow-ups.
-- **For `codex_review`:** Group findings by severity (critical/bugs, behavioral/edge-case risks, minor improvements) with exact file references from `summary`, spot-checking flagged files with `read_file` when helpful.
-- **For `codex_plan`:** Summarize Codex's findings or proposal clearly and ask whether to proceed with implementation if edits are warranted.
+Never dump raw JSON, JSONL logs, or defensive walls of text. Present results cleanly in plain language in the **user's own language**:
+- **For `codex_run`:** Inspect `changed_files`, `pre_existing_dirty_files` (do not attribute untouched dirty files to Codex), and `diff_stat`. Read key modified files to verify correctness and check for needless over-engineering relative to the Rigor Level, then summarize what changed, verification results, and `session_id` readiness for follow-ups.
+- **For `codex_review` and `codex_plan`:** Apply the **Red / Yellow / White** signal filter (spot-checking flagged files with `read_file` when helpful):
+  - 🔴 **Red (Must-Fix Blockers):** Real bugs, broken assumptions, or serious risks with exact file references.
+  - 🟡 **Yellow (Trade-Offs):** Legitimate edge-case or design choices framed as quick A/B decisions.
+  - ⚪ **White (Over-Defensive Noise):** Collapse all low-value/speculative conservative nits into **one single sentence** instead of listing them out.
+  - For `codex_plan`, finish by asking whether to proceed with implementation if edits are warranted.

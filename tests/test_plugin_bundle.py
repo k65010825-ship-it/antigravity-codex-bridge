@@ -176,7 +176,10 @@ class TestPluginBundle(unittest.TestCase):
         skills_dir = REPO_ROOT / "skills"
         self.assertTrue(skills_dir.is_dir(), "Missing skills/ directory")
         skill_dirs = sorted(p for p in skills_dir.iterdir() if p.is_dir())
-        self.assertEqual([p.name for p in skill_dirs], ["codex-architect", "codex-subagent"])
+        self.assertEqual(
+            [p.name for p in skill_dirs],
+            ["codex-architect", "codex-subagent", "dual-track-build", "idea-redteam"],
+        )
 
         for skill_dir in skill_dirs:
             skill_md = skill_dir / "SKILL.md"

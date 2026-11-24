@@ -1,11 +1,13 @@
 ---
 name: codex-architect
-description: "Orchestrates Mode A two-phase architecture design and implementation with OpenAI Codex CLI via codex-bridge_codex. Use when handling heavy backend features, system architecture, complex multi-file refactors, or tricky debugging that benefit from read-only planning, user sign-off, and resumed execution."
+description: "Orchestrates Mode A two-phase architecture design and implementation with OpenAI Codex CLI via codex-bridge_codex. Use for pure heavy backend features, system architecture, complex multi-file refactors, or tricky debugging (for creative/UI + code projects prefer dual-track-build; for early idea vetting prefer idea-redteam)."
 ---
 
 # Codex Architect — Mode A Two-Phase Workflow
 
 Guide heavy engineering tasks from human intent to verified implementation using **Phase 1 read-only planning** (`codex_plan`), **user sign-off**, and **Phase 2 resumed execution** (`codex_run`). Always converse, ask questions, and deliver summaries in the **user's own language**.
+
+> If the task also involves user-facing UI aesthetics, visual layouts, or creative presentation, prefer `dual-track-build` so Gemini owns the UI Freeze Zone.
 
 ## MCP Reference (`codex-bridge_codex`)
 
@@ -35,7 +37,11 @@ Synthesize the user's answers and any paths you already inspected into a structu
 ```markdown
 ## Goal & Non-Goals
 - Goal: <clear engineering objective>
-- Non-Goals: <explicit boundaries not to touch>
+- Non-Goals: <explicit boundaries not to touch, including UI Freeze Zone paths if any>
+
+## Rigor Level
+- Level: <L1 Spike | L2 Pragmatic MVP (default) | L3 Production Hardened>
+- Anti-Overengineering Rule: Calibrate strictly to this level. Avoid speculative abstractions, wrapper factories, or defensive boilerplate not requested.
 
 ## Workspace & Key Context
 - Target cwd: <abs_cwd>
@@ -48,7 +54,7 @@ Synthesize the user's answers and any paths you already inspected into a structu
 - <specific unit/integration tests or commands to verify behavior>
 ```
 
-For Phase 1, instruct Codex to stay read-only and output: proposed architecture/design, exact files to create or modify, trade-offs/risks, and concrete verification steps.
+For Phase 1, instruct Codex to stay read-only and output: proposed architecture/design, exact files to create or modify, risks/trade-offs tagged `[BLOCKER]` / `[TRADEOFF]` / `[NIT]`, and concrete verification steps.
 
 ## Step 4: Phase 1 — Read-Only Plan (`codex_plan`)
 
@@ -63,11 +69,12 @@ For Phase 1, instruct Codex to stay read-only and output: proposed architecture/
 
 ## Step 5: Human Plan Review & Sign-Off Gate
 
-Translate `summary` into clear, structured language for the user (never dump raw logs):
-- **Approach:** What Codex proposes and why
-- **Scope:** Files and modules to be created or modified
-- **Trade-offs & Risks:** Assumptions, alternatives, or open questions
+Translate `summary` into clear, plain language for the user (never dump raw logs), applying the **Red / Yellow / White** signal filter:
+- **Approach & Scope:** What Codex proposes, why, and which files/modules change
+- 🔴 **Blockers / Critical Risks (Red):** Must-address issues or hard constraints
+- 🟡 **Trade-Offs for Your Call (Yellow):** Concise A/B choices where user judgment matters
 - **Verification Plan:** How changes will be tested
+- ⚪ **Filtered Noise (White):** Collapse any over-defensive/speculative nits mismatched with the Rigor Level into **one single sentence** (or omit if none)
 
 **Stop and ask for explicit user approval** (and any adjustments) before calling `codex_run` to edit files.
 
@@ -89,10 +96,10 @@ Translate `summary` into clear, structured language for the user (never dump raw
    - `changed_files`: exact files created, modified, or deleted by Codex
    - `pre_existing_dirty_files`: dirty files that existed before Codex ran (do not attribute these to Codex)
    - `diff_stat`: concise per-file line delta
-2. Use `read_file` to inspect key changed files, and run a quick sanity check or test suite if Codex could not verify everything or if final verification evidence is missing.
-3. Optionally run `codex_review(cwd="<abs_cwd>", mode="uncommitted")` on high-risk changes before reporting.
-4. Report concisely in the user's language:
+2. Use `read_file` to inspect key changed files for both correctness **and** anti-overengineering (flag or simplify needless abstractions/bloat relative to the active Rigor Level), and run a quick sanity check or test suite if Codex could not verify everything or if final verification evidence is missing.
+3. Optionally run `codex_review(cwd="<abs_cwd>", mode="uncommitted")` on high-risk changes before reporting, translating findings via the Red / Yellow / White filter (White in one sentence).
+4. Report concisely in plain human language:
    - **What changed** (files and behavioral summary)
    - **Why** (key design decisions)
    - **Verification** (observed test/command results and manual file checks)
-   - **Open items / next steps** (only if any remain)
+   - **Open items / filtered noise** (Yellow items if any, plus at most one sentence if White defensive nits were filtered)
