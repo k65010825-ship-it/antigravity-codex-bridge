@@ -578,6 +578,16 @@ class McpServer:
         """Serve newline-delimited JSON-RPC 2.0 requests on stdio until EOF."""
         in_stream = stdin if stdin is not None else sys.stdin
         out_stream = stdout if stdout is not None else sys.stdout
+        if stdin is None and hasattr(in_stream, "reconfigure"):
+            try:
+                in_stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+        if stdout is None and hasattr(out_stream, "reconfigure"):
+            try:
+                out_stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
         self._shutting_down.clear()
         try:
             for raw_line in in_stream:

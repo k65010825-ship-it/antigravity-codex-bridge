@@ -40,6 +40,48 @@ class CodexRunnerError(ValueError):
     """Raised when runner validation or preflight requirements fail."""
 
 
+def _discover_windows_desktop_codex_bin() -> str | None:
+    """Auto-discover the bundled codex.exe shipped with Codex Desktop on Windows."""
+    if os.name != "nt":
+        return None
+
+    # 1. Prefer CODEX_CLI_PATH recorded by Codex Desktop in ~/.codex/config.toml
+    config_path = _get_codex_home_dir() / "config.toml"
+    try:
+        if config_path.is_file():
+            for raw_line in config_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                stripped = raw_line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, raw_val = stripped.split("=", 1)
+                if key.strip() == "CODEX_CLI_PATH":
+                    candidate_str = _unquote_toml_string(raw_val)
+                    if candidate_str:
+                        candidate = Path(candidate_str)
+                        if candidate.is_file():
+                            return str(candidate)
+    except OSError:
+        pass
+
+    # 2. Fallback: scan WindowsApps for installed OpenAI.Codex_* packages (newest first)
+    program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    windows_apps = program_files / "WindowsApps"
+    try:
+        if windows_apps.is_dir():
+            candidates = sorted(
+                windows_apps.glob("OpenAI.Codex_*/app/resources/codex.exe"),
+                key=lambda p: p.parent.parent.parent.name,
+                reverse=True,
+            )
+            for candidate in candidates:
+                if candidate.is_file():
+                    return str(candidate)
+    except OSError:
+        pass
+
+    return None
+
+
 def resolve_codex_bin() -> str | None:
     """Resolve the Codex CLI executable path or return None if unavailable."""
     override = os.environ.get("CODEX_BIN", "").strip()
@@ -54,6 +96,10 @@ def resolve_codex_bin() -> str | None:
     which_path = shutil.which("codex")
     if which_path:
         return which_path
+
+    desktop_bin = _discover_windows_desktop_codex_bin()
+    if desktop_bin:
+        return desktop_bin
 
     for fallback in FALLBACK_CODEX_PATHS:
         if os.path.isfile(fallback) and os.access(fallback, os.X_OK):
@@ -181,8 +227,11 @@ def check_auth_state(codex_bin: str | None) -> dict[str, Any]:
         try:
             proc = subprocess.run(
                 [codex_bin, "login", "status"],
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=PREFLIGHT_TIMEOUT_SECONDS,
                 check=False,
             )
@@ -225,8 +274,11 @@ def inspect_git_repo(cwd: Path) -> dict[str, Any]:
     try:
         probe = subprocess.run(
             ["git", "-C", str(cwd), "rev-parse", "--is-inside-work-tree"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=PREFLIGHT_TIMEOUT_SECONDS,
             check=False,
         )
@@ -240,8 +292,11 @@ def inspect_git_repo(cwd: Path) -> dict[str, Any]:
     try:
         branch_proc = subprocess.run(
             ["git", "-C", str(cwd), "rev-parse", "--abbrev-ref", "HEAD"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=PREFLIGHT_TIMEOUT_SECONDS,
             check=False,
         )
@@ -254,8 +309,11 @@ def inspect_git_repo(cwd: Path) -> dict[str, Any]:
     try:
         status_proc = subprocess.run(
             ["git", "-C", str(cwd), "status", "--porcelain"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=PREFLIGHT_TIMEOUT_SECONDS,
             check=False,
         )
@@ -283,8 +341,11 @@ def check_status(cwd: str | None = None) -> dict[str, Any]:
         try:
             ver_proc = subprocess.run(
                 [codex_bin, "--version"],
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=PREFLIGHT_TIMEOUT_SECONDS,
                 check=False,
             )
@@ -486,6 +547,7 @@ def _git_output(cwd: Path, args: list[str]) -> str:
     try:
         proc = subprocess.run(
             ["git", "-C", str(cwd), *args],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -519,6 +581,7 @@ def _capture_git_porcelain(cwd: Path) -> dict[str, str]:
     try:
         proc = subprocess.run(
             ["git", "-C", str(cwd), "status", "--porcelain=v1", "-z", "-uall"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=PREFLIGHT_TIMEOUT_SECONDS,
             check=False,
@@ -1151,12 +1214,18 @@ class CodexTaskManager:
             proc = task.proc
             if terminate_running and proc is not None and proc.poll() is None:
                 try:
-                    os.killpg(proc.pid, signal.SIGTERM)
+                    if hasattr(os, "killpg"):
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    else:
+                        proc.terminate()
                 except OSError:
                     pass
                 if not task.done_event.wait(timeout=timeout) and proc.poll() is None:
                     try:
-                        os.killpg(proc.pid, signal.SIGKILL)
+                        if hasattr(os, "killpg") and hasattr(signal, "SIGKILL"):
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        else:
+                            proc.kill()
                     except OSError:
                         pass
             task.done_event.wait(timeout=1.0)
