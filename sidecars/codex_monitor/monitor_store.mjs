@@ -139,21 +139,77 @@ function isExecutable(filePath) {
   }
 }
 
-export function resolveCodexBin(env = process.env) {
-  const override = (env.CODEX_BIN || '').trim();
-  if (override) {
-    if (override.includes('/') || override.includes('\\') || existsSync(override)) {
-      return isExecutable(override) ? override : null;
+const PRERELEASE_RANKS = { alpha: 1, beta: 2, rc: 3 };
+
+function parseCodexVersion(text) {
+  if (!text) return null;
+  const match = String(text).match(/\b(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/);
+  if (!match) return null;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  const pre = match[4];
+  if (!pre) return [major, minor, patch, 1, 0, 0];
+  const parts = pre.toLowerCase().split('.');
+  const rank = PRERELEASE_RANKS[parts[0]] ?? 0;
+  const num = parts.length > 1 && /^\d+$/.test(parts[1]) ? Number(parts[1]) : 0;
+  return [major, minor, patch, 0, rank, num];
+}
+
+function compareCodexVersions(a, b) {
+  for (let i = 0; i < 6; i += 1) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+function isSandboxCodexShim(filePath) {
+  return String(filePath || '')
+    .split(/[\\/]+/)
+    .some((part) => part.toLowerCase() === '.sandbox-bin');
+}
+
+function discoverWindowsDesktopCodexBin(env = process.env) {
+  if (process.platform !== 'win32') return null;
+  const codexHomeDir = (env.CODEX_HOME || '').trim() || join(homedir(), '.codex');
+  const cfgPath = join(codexHomeDir, 'config.toml');
+  if (existsSync(cfgPath)) {
+    try {
+      const content = readFileSync(cfgPath, 'utf8');
+      for (const rawLine of content.split(/\r?\n/)) {
+        const stripped = rawLine.trim();
+        if (!stripped || stripped.startsWith('#') || !stripped.includes('=')) continue;
+        const eqIdx = stripped.indexOf('=');
+        if (stripped.slice(0, eqIdx).trim() === 'CODEX_CLI_PATH') {
+          const candidate = unquoteTomlString(stripped.slice(eqIdx + 1));
+          if (candidate && isExecutable(candidate)) return candidate;
+        }
+      }
+    } catch {
+      // ignore config read failure
     }
-    const pathDirs = (env.PATH || '').split(process.platform === 'win32' ? ';' : ':');
-    for (const dir of pathDirs) {
-      if (!dir) continue;
-      const cand = join(dir, override);
-      if (isExecutable(cand)) return cand;
-    }
-    return null;
   }
 
+  const programFiles = (env.ProgramFiles || 'C:\\Program Files').trim();
+  const windowsApps = join(programFiles, 'WindowsApps');
+  try {
+    if (existsSync(windowsApps)) {
+      const dirs = readdirSync(windowsApps)
+        .filter((name) => name.startsWith('OpenAI.Codex_'))
+        .sort()
+        .reverse();
+      for (const dir of dirs) {
+        const candidate = join(windowsApps, dir, 'app', 'resources', 'codex.exe');
+        if (isExecutable(candidate)) return candidate;
+      }
+    }
+  } catch {
+    // ignore WindowsApps permission/access errors
+  }
+  return null;
+}
+
+function findPathCodexBin(env = process.env) {
   const pathDirs = (env.PATH || '').split(process.platform === 'win32' ? ';' : ':');
   const binName = process.platform === 'win32' ? 'codex.exe' : 'codex';
   for (const dir of pathDirs) {
@@ -161,6 +217,42 @@ export function resolveCodexBin(env = process.env) {
     const cand = join(dir, binName);
     if (isExecutable(cand)) return cand;
   }
+  return null;
+}
+
+export function resolveCodexBin(env = process.env) {
+  const override = (env.CODEX_BIN || '').trim();
+  if (override) {
+    let resolvedOverride = null;
+    if (override.includes('/') || override.includes('\\') || existsSync(override)) {
+      resolvedOverride = isExecutable(override) ? override : null;
+    } else {
+      const pathDirs = (env.PATH || '').split(process.platform === 'win32' ? ';' : ':');
+      for (const dir of pathDirs) {
+        if (!dir) continue;
+        const cand = join(dir, override);
+        if (isExecutable(cand)) {
+          resolvedOverride = cand;
+          break;
+        }
+      }
+    }
+    if (isSandboxCodexShim(resolvedOverride || override)) {
+      const desktopBin = discoverWindowsDesktopCodexBin(env);
+      if (desktopBin && !isSandboxCodexShim(desktopBin)) {
+        return desktopBin;
+      }
+    }
+    return resolvedOverride;
+  }
+
+  const pathBin = findPathCodexBin(env);
+  const desktopBin = discoverWindowsDesktopCodexBin(env);
+  if (pathBin && desktopBin && isSandboxCodexShim(pathBin) && !isSandboxCodexShim(desktopBin)) {
+    return desktopBin;
+  }
+  if (pathBin) return pathBin;
+  if (desktopBin) return desktopBin;
 
   for (const fallback of FALLBACK_CODEX_BINS) {
     if (isExecutable(fallback)) return fallback;
@@ -242,7 +334,24 @@ export function createMonitorStore(env = process.env) {
       return { ...cliStatusCache.val };
     }
 
-    const codexBin = resolveCodexBin(env);
+    let codexBin = resolveCodexBin(env);
+    if (!(env.CODEX_BIN || '').trim() && process.platform === 'win32') {
+      const pathBin = findPathCodexBin(env);
+      const desktopBin = discoverWindowsDesktopCodexBin(env);
+      if (pathBin && desktopBin && pathBin.toLowerCase() !== desktopBin.toLowerCase()) {
+        const [pathVerRes, desktopVerRes] = await Promise.all([
+          execCommand(pathBin, ['--version']),
+          execCommand(desktopBin, ['--version']),
+        ]);
+        const pathVer = pathVerRes.ok ? parseCodexVersion(pathVerRes.stdout || pathVerRes.stderr) : null;
+        const desktopVer = desktopVerRes.ok ? parseCodexVersion(desktopVerRes.stdout || desktopVerRes.stderr) : null;
+        if (desktopVer && (!pathVer || compareCodexVersions(desktopVer, pathVer) > 0)) {
+          codexBin = desktopBin;
+        } else if (pathVer && (!desktopVer || compareCodexVersions(pathVer, desktopVer) > 0)) {
+          codexBin = pathBin;
+        }
+      }
+    }
     const binaryFound = codexBin !== null;
     const defaults = readCodexDefaults(paths.codexHomeDir);
 
@@ -260,7 +369,12 @@ export function createMonitorStore(env = process.env) {
       }
       const combined = [loginRes.stdout.trim(), loginRes.stderr.trim()].filter(Boolean).join('\n').trim();
       if (combined) {
-        loginStatusText = combined.split(/\r?\n/)[0].trim();
+        const lines = combined
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+        const nonWarning = lines.filter((line) => !line.toUpperCase().startsWith('WARNING:'));
+        loginStatusText = nonWarning[0] || lines[0] || null;
       }
       oauthLoggedIn = loginRes.code === 0 && !combined.toLowerCase().includes('not logged in');
     }

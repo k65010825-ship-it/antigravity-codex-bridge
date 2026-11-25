@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import {
   buildMonitorHtml,
   createMonitorStore,
+  resolveCodexBin,
   resolvePaths,
 } from '../sidecars/codex_monitor/monitor_store.mjs';
 
@@ -84,6 +85,36 @@ test('resolvePaths derives brainDir and pluginDataDir from ANTIGRAVITY_EXECUTABL
   assert.equal(paths.brainDir, '/tmp/appData/brain');
   assert.equal(paths.pluginDataDir, '/tmp/appData/plugin_data/codex-bridge');
   assert.equal(paths.tasksDir, '/tmp/appData/plugin_data/codex-bridge/tasks');
+});
+
+test('resolveCodexBin skips .sandbox-bin shim when Windows Desktop CODEX_CLI_PATH exists', { skip: process.platform !== 'win32' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-bin-resolve-'));
+  try {
+    const codexHome = join(root, '.codex');
+    const sandboxDir = join(codexHome, '.sandbox-bin');
+    const desktopDir = join(root, 'WindowsApps', 'OpenAI.Codex_26', 'app', 'resources');
+    mkdirSync(sandboxDir, { recursive: true });
+    mkdirSync(desktopDir, { recursive: true });
+    const shimBin = join(sandboxDir, 'codex.exe');
+    const desktopBin = join(desktopDir, 'codex.exe');
+    writeFileSync(shimBin, '', 'utf8');
+    writeFileSync(desktopBin, '', 'utf8');
+    writeFileSync(join(codexHome, 'config.toml'), `CODEX_CLI_PATH = '${desktopBin}'\n`, 'utf8');
+
+    const resolved = resolveCodexBin({
+      PATH: sandboxDir,
+      CODEX_HOME: codexHome,
+    });
+    assert.equal(resolved, desktopBin);
+
+    const resolvedFromOverride = resolveCodexBin({
+      CODEX_BIN: shimBin,
+      CODEX_HOME: codexHome,
+    });
+    assert.equal(resolvedFromOverride, desktopBin);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('per-conversation isolation, subagent tree inheritance, historical backfill, and scoped clear', async () => {

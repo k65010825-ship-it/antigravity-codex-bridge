@@ -73,6 +73,63 @@ class TestRunnerFoundation(unittest.TestCase):
         with mock.patch.dict(os.environ, {"CODEX_BIN": "/nonexistent/codex-xyz"}, clear=False):
             self.assertIsNone(resolve_codex_bin())
 
+    def test_parse_codex_version_and_prefers_newer_desktop_over_stale_path(self) -> None:
+        self.assertGreater(
+            codex_runner._parse_codex_version("codex-cli 0.171.0-alpha.13"),
+            codex_runner._parse_codex_version("codex-cli 0.160.1"),
+        )
+        self.assertGreater(
+            codex_runner._parse_codex_version("codex-cli 0.171.0"),
+            codex_runner._parse_codex_version("codex-cli 0.171.0-alpha.13"),
+        )
+
+        old_shim = str(self.tmpdir / ".sandbox-bin" / "codex.exe")
+        desktop_bin = str(self.tmpdir / "WindowsApps" / "OpenAI.Codex_26" / "codex.exe")
+        versions = {
+            old_shim: codex_runner._parse_codex_version("codex-cli 0.160.1"),
+            desktop_bin: codex_runner._parse_codex_version("codex-cli 0.171.0-alpha.13"),
+        }
+        with (
+            mock.patch.dict(os.environ, {}, clear=False),
+            mock.patch.object(codex_runner.shutil, "which", return_value=old_shim),
+            mock.patch.object(codex_runner, "_discover_windows_desktop_codex_bin", return_value=desktop_bin),
+            mock.patch.object(codex_runner, "_probe_codex_bin_version", side_effect=lambda p: versions[p]),
+        ):
+            os.environ.pop("CODEX_BIN", None)
+            self.assertEqual(resolve_codex_bin(), desktop_bin)
+
+        # Newer standalone PATH binary beats older desktop binary
+        newer_path = str(self.tmpdir / "npm" / "codex.exe")
+        versions[newer_path] = codex_runner._parse_codex_version("codex-cli 0.180.0")
+        with (
+            mock.patch.dict(os.environ, {}, clear=False),
+            mock.patch.object(codex_runner.shutil, "which", return_value=newer_path),
+            mock.patch.object(codex_runner, "_discover_windows_desktop_codex_bin", return_value=desktop_bin),
+            mock.patch.object(codex_runner, "_probe_codex_bin_version", side_effect=lambda p: versions[p]),
+        ):
+            os.environ.pop("CODEX_BIN", None)
+            self.assertEqual(resolve_codex_bin(), newer_path)
+
+        # Equal/unknown versions prefer desktop binary over .sandbox-bin shim
+        with (
+            mock.patch.dict(os.environ, {}, clear=False),
+            mock.patch.object(codex_runner.shutil, "which", return_value=old_shim),
+            mock.patch.object(codex_runner, "_discover_windows_desktop_codex_bin", return_value=desktop_bin),
+            mock.patch.object(codex_runner, "_probe_codex_bin_version", return_value=None),
+        ):
+            os.environ.pop("CODEX_BIN", None)
+            self.assertEqual(resolve_codex_bin(), desktop_bin)
+
+        # Even if CODEX_BIN env var points to a stale .sandbox-bin shim, prefer newer desktop binary
+        Path(old_shim).parent.mkdir(parents=True, exist_ok=True)
+        Path(old_shim).write_text("", encoding="utf-8")
+        with (
+            mock.patch.dict(os.environ, {"CODEX_BIN": old_shim}, clear=False),
+            mock.patch.object(codex_runner, "_discover_windows_desktop_codex_bin", return_value=desktop_bin),
+            mock.patch.object(codex_runner, "_probe_codex_bin_version", side_effect=lambda p: versions[p]),
+        ):
+            self.assertEqual(resolve_codex_bin(), desktop_bin)
+
     def test_check_status_detects_custom_provider_without_oauth_login(self) -> None:
         codex_home = self.tmpdir / "codex_home"
         codex_home.mkdir()

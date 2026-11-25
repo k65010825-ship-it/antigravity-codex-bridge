@@ -34,10 +34,70 @@ DEFAULT_DASHBOARD_LIMIT = 50
 MAX_DASHBOARD_LIMIT = 200
 MAX_CLI_SESSION_FILES = 25
 TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_CODEX_VERSION_RE = re.compile(r"\b(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?")
+_PRERELEASE_RANKS = {"alpha": 1, "beta": 2, "rc": 3}
+_CODEX_BIN_VERSION_CACHE: dict[
+    tuple[str, int, int], tuple[int, int, int, int, int, int] | None
+] = {}
 
 
 class CodexRunnerError(ValueError):
     """Raised when runner validation or preflight requirements fail."""
+
+
+def _parse_codex_version(text: str | None) -> tuple[int, int, int, int, int, int] | None:
+    """Parse a Codex CLI version string into a comparable tuple (stable > prerelease)."""
+    if not text:
+        return None
+    match = _CODEX_VERSION_RE.search(text)
+    if not match:
+        return None
+    major, minor, patch = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    prerelease = match.group(4)
+    if not prerelease:
+        return (major, minor, patch, 1, 0, 0)
+    parts = prerelease.lower().split(".")
+    rank = _PRERELEASE_RANKS.get(parts[0], 0)
+    num = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    return (major, minor, patch, 0, rank, num)
+
+
+def _is_sandbox_codex_shim(binary_path: str) -> bool:
+    """Return True if binary_path points inside Codex's internal .sandbox-bin shim directory."""
+    return any(part.lower() == ".sandbox-bin" for part in Path(binary_path).parts)
+
+
+def _probe_codex_bin_version(binary_path: str) -> tuple[int, int, int, int, int, int] | None:
+    """Run `<binary> --version` with an mtime/size-keyed in-process cache."""
+    cache_key: tuple[str, int, int] | None = None
+    try:
+        st = os.stat(binary_path)
+        cache_key = (os.path.normcase(os.path.abspath(binary_path)), st.st_mtime_ns, st.st_size)
+        if cache_key in _CODEX_BIN_VERSION_CACHE:
+            return _CODEX_BIN_VERSION_CACHE[cache_key]
+    except OSError:
+        pass
+
+    parsed: tuple[int, int, int, int, int, int] | None = None
+    try:
+        proc = subprocess.run(
+            [binary_path, "--version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PREFLIGHT_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if proc.returncode == 0:
+            parsed = _parse_codex_version(proc.stdout) or _parse_codex_version(proc.stderr)
+    except (subprocess.TimeoutExpired, OSError):
+        parsed = None
+
+    if cache_key is not None:
+        _CODEX_BIN_VERSION_CACHE[cache_key] = parsed
+    return parsed
 
 
 def _discover_windows_desktop_codex_bin() -> str | None:
@@ -86,18 +146,48 @@ def resolve_codex_bin() -> str | None:
     """Resolve the Codex CLI executable path or return None if unavailable."""
     override = os.environ.get("CODEX_BIN", "").strip()
     if override:
+        resolved_override: str | None = None
         candidate = Path(override).expanduser()
-        if os.path.sep in override or candidate.exists():
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
-            return None
-        return shutil.which(override)
+        try:
+            if os.path.sep in override or "/" in override or candidate.exists():
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    resolved_override = str(candidate)
+            else:
+                resolved_override = shutil.which(override)
+        except OSError:
+            resolved_override = None
+
+        if _is_sandbox_codex_shim(resolved_override or override):
+            desktop_bin = _discover_windows_desktop_codex_bin()
+            if desktop_bin and not _is_sandbox_codex_shim(desktop_bin):
+                if resolved_override is None:
+                    return desktop_bin
+                override_ver = _probe_codex_bin_version(resolved_override)
+                desktop_ver = _probe_codex_bin_version(desktop_bin)
+                if desktop_ver is not None and (override_ver is None or desktop_ver > override_ver):
+                    return desktop_bin
+
+        return resolved_override
 
     which_path = shutil.which("codex")
+    desktop_bin = _discover_windows_desktop_codex_bin()
+
+    if which_path and desktop_bin:
+        if os.path.normcase(os.path.abspath(which_path)) == os.path.normcase(os.path.abspath(desktop_bin)):
+            return which_path
+        which_ver = _probe_codex_bin_version(which_path)
+        desktop_ver = _probe_codex_bin_version(desktop_bin)
+        if desktop_ver is not None and (which_ver is None or desktop_ver > which_ver):
+            return desktop_bin
+        if which_ver is not None and (desktop_ver is None or which_ver > desktop_ver):
+            return which_path
+        if _is_sandbox_codex_shim(which_path) and not _is_sandbox_codex_shim(desktop_bin):
+            return desktop_bin
+        return which_path
+
     if which_path:
         return which_path
 
-    desktop_bin = _discover_windows_desktop_codex_bin()
     if desktop_bin:
         return desktop_bin
 
@@ -239,7 +329,9 @@ def check_auth_state(codex_bin: str | None) -> dict[str, Any]:
                 part.strip() for part in (proc.stdout, proc.stderr) if part and part.strip()
             ).strip()
             if combined:
-                login_status_text = combined.splitlines()[0].strip()
+                lines = [line.strip() for line in combined.splitlines() if line.strip()]
+                non_warning = [line for line in lines if not line.upper().startswith("WARNING:")]
+                login_status_text = non_warning[0] if non_warning else lines[0]
             oauth_logged_in = proc.returncode == 0 and "not logged in" not in combined.lower()
         except (subprocess.TimeoutExpired, OSError) as exc:
             login_status_text = f"login status check failed: {type(exc).__name__}"
